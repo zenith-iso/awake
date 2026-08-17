@@ -29,7 +29,7 @@ import threading
 import time
 from collections import defaultdict
 
-from netscan.config_store import (
+from framework.config_store import (
     ScanConfig,
     load_profiles,
     save_profiles,
@@ -37,7 +37,7 @@ from netscan.config_store import (
     save_state,
     parse_port_spec,
 )
-from netscan.tui_widgets import (
+from framework.tui_widgets import (
     init_colors,
     menu,
     checklist,
@@ -49,53 +49,17 @@ from netscan.tui_widgets import (
     draw_header,
     draw_footer,
 )
-from netscan.masscan_scanner import MasscanScanner, MasscanNotFoundError, MasscanExecutionError
-from netscan.fingerprinter import fingerprint_hosts
-from netscan.device_classifier import classify_host
-from netscan.signatures import PORT_SERVICE_MAP, DEFAULT_TOP_PORTS
+from framework.masscan_scanner import MasscanScanner, MasscanNotFoundError, MasscanExecutionError
+from framework.fingerprinter import fingerprint_hosts
+from framework.device_classifier import classify_host
+from framework.signatures import PORT_SERVICE_MAP, DEFAULT_TOP_PORTS
+from framework.http_universal_bruter import (
+    UniversalHTTPBruter,
+    brute_hosts_from_scan,
+    BruteResult,
+)
 
 
-class App:
-    def __init__(self):
-        self.profiles: dict[str, ScanConfig] = load_profiles()
-        state = load_state()
-        self.recent_targets: list[str] = state.get("recent_targets", [])
-        last_cfg = state.get("last_config")
-        self.config: ScanConfig = ScanConfig.from_dict(last_cfg) if last_cfg else ScanConfig()
-        self.last_reports = []          # list[HostReport]
-        self.last_scan_meta = {}
-
-    def add_recent_target(self, target: str):
-        if target in self.recent_targets:
-            self.recent_targets.remove(target)
-        self.recent_targets.append(target)
-        self.recent_targets = self.recent_targets[-10:]
-
-    def persist(self):
-        save_state(self.config, self.recent_targets)
-
-
-def write_json_report(path: str, reports) -> None:
-    serializable = []
-    for r in reports:
-        serializable.append({
-            "ip": r.ip,
-            "open_ports": r.open_ports,
-            "services": r.services,
-            "os_guess": r.os_guess,
-            "device_type": r.top_classification.device_type if r.top_classification else None,
-            "vendor": r.top_classification.vendor if r.top_classification else None,
-            "confidence": r.top_classification.confidence if r.top_classification else None,
-            "matched_on": r.top_classification.matched_on if r.top_classification else None,
-            "candidates": [
-                {"device_type": c.device_type, "vendor": c.vendor, "confidence": c.confidence}
-                for c in r.candidates
-            ],
-            "http_titles": r.http_titles,
-            "http_servers": r.http_servers,
-        })
-    with open(path, "w") as f:
-        json.dump(serializable, f, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +416,18 @@ def run_scan_screen(stdscr, app: App):
 # Main menu / app loop
 # ---------------------------------------------------------------------------
 
+class App:
+    def __init__(self):
+        self.profiles: dict[str, ScanConfig] = load_profiles()
+        state = load_state()
+        self.recent_targets: list[str] = state.get("recent_targets", [])
+        last_cfg = state.get("last_config")
+        self.config: ScanConfig = ScanConfig.from_dict(last_cfg) if last_cfg else ScanConfig()
+        self.last_reports = []
+        self.last_scan_meta = {}
+        self.last_brute_results: list[BruteResult] = []  # NEW
+
+
 def main_menu(stdscr, app: App):
     while True:
         results_label = "View Last Results"
@@ -459,6 +435,11 @@ def main_menu(stdscr, app: App):
             results_label += f" ({len(app.last_reports)} host(s))"
         else:
             results_label += " (none yet)"
+
+        # Add bruteforce result indicator
+        brute_label = "HTTP Auth Bruteforce"
+        if hasattr(app, 'last_brute_results') and app.last_brute_results:
+            brute_label += f" ({len(app.last_brute_results)} found)"
 
         items = [
             f"Target Range(s)   [{app.config.target or 'not set'}]",
@@ -469,15 +450,16 @@ def main_menu(stdscr, app: App):
             "Delete Profile",
             "Run Scan",
             results_label,
+            brute_label,  # NEW
             "Quit",
         ]
         choice = menu(
-            stdscr, "netscan", items,
+            stdscr, "AWAKE", items,
             subtitle=app.config.summary(),
             footer="\u2191/\u2193 move   Enter select   q quit",
         )
 
-        if choice in (-1, 8):
+        if choice in (-1, 9):  # Updated quit index
             return
         elif choice == 0:
             screen_target(stdscr, app)
@@ -495,8 +477,133 @@ def main_menu(stdscr, app: App):
             run_scan_screen(stdscr, app)
         elif choice == 7:
             view_results_screen(stdscr, app)
+        elif choice == 8:  # NEW
+            run_bruteforce_screen(stdscr, app)
+        elif choice == 9:
+            return
 
         app.persist()
+
+def run_bruteforce_screen(stdscr, app: App):
+    """Run HTTP Basic Auth bruteforce against last scan results."""
+    if not app.last_reports:
+        message_box(stdscr, "No Results", ["Run a scan first to get targets."])
+        return
+
+    # Configure bruteforce options
+    options = [
+        "Use default credentials (common admin passwords)",
+        "Use custom wordlist files",
+        "Back",
+    ]
+
+    choice = menu(stdscr, "HTTP Auth Bruteforce", options,
+                  subtitle=f"Targets: {len(app.last_reports)} hosts")
+
+    if choice in (-1, 2):
+        return
+
+    usernames = None
+    passwords = None
+
+    if choice == 1:
+        # Get wordlist paths
+        user_path = text_input(stdscr, "Username wordlist path (blank for defaults)", "")
+        pass_path = text_input(stdscr, "Password wordlist path (blank for defaults)", "")
+
+        if user_path:
+            try:
+                with open(user_path) as f:
+                    usernames = [l.strip() for l in f if l.strip()]
+            except OSError as e:
+                message_box(stdscr, "Error", [f"Cannot read username list: {e}"])
+                return
+
+        if pass_path:
+            try:
+                with open(pass_path) as f:
+                    passwords = [l.strip() for l in f if l.strip()]
+            except OSError as e:
+                message_box(stdscr, "Error", [f"Cannot read password list: {e}"])
+                return
+
+    # Confirm and run
+    if not confirm(stdscr, f"Bruteforce {len(app.last_reports)} hosts? This may take a while."):
+        return
+
+    # Convert reports to format expected by bruteforce module
+    scan_data = []
+    for r in app.last_reports:
+        scan_data.append({
+            'ip': r.ip,
+            'open_ports': r.open_ports,
+        })
+
+    # Run bruteforce with progress display
+    log_lines = ["[*] Starting HTTP Basic Auth bruteforce..."]
+
+    def log_callback(msg):
+        log_lines.append(msg)
+
+    # Monkey-patch print to capture output
+    original_print = print
+    def capture_print(*args, **kwargs):
+        msg = ' '.join(str(a) for a in args)
+        log_lines.append(msg)
+        stdscr.erase()
+        draw_header(stdscr, "Bruteforce Progress", "")
+        h, w = stdscr.getmaxyx()
+        visible = max(1, h - 6)
+        for row, line in enumerate(log_lines[-visible:]):
+            safe_addstr(stdscr, 3 + row, 2, line[:w-4])
+        draw_footer(stdscr, "q to cancel")
+        stdscr.refresh()
+
+    import builtins
+    builtins.print = capture_print
+
+    try:
+        bruter = UniversalHTTPBruter(
+            usernames=usernames,
+            passwords=passwords,
+            auto_open=True,
+            max_workers=10
+        )
+
+        all_results = []
+        for host_data in scan_data:
+            ip = host_data['ip']
+            ports = host_data['open_ports']
+
+            log_callback(f"[*] Scanning {ip}...")
+            results = bruter.scan_host(ip, ports)
+            all_results.extend(results)
+
+            # Check for cancel
+            stdscr.nodelay(True)
+            key = stdscr.getch()
+            stdscr.nodelay(False)
+            if key == ord('q'):
+                log_callback("[!] Cancelled by user")
+                break
+
+        app.last_brute_results = all_results
+
+    finally:
+        builtins.print = original_print
+
+    # Show results
+    if app.last_brute_results:
+        result_lines = [f"[+] Found {len(app.last_brute_results)} valid credentials:"]
+        for r in app.last_brute_results:
+            result_lines.append(f"    {r.url}")
+            result_lines.append(f"        -> {r.username}:{r.password}")
+        scrollable_text(stdscr, "Bruteforce Results", result_lines)
+    else:
+        message_box(stdscr, "Complete", ["No valid credentials found."])
+
+
+
 
 
 def run(stdscr):

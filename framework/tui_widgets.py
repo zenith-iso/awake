@@ -223,7 +223,7 @@ def draw_header(
         stdscr,
         1,
         2,
-        "NETSCAN",
+        "V1.1",
         curses.color_pair(PAIR_ACCENT) | curses.A_BOLD,
     )
 
