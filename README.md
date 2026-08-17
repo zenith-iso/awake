@@ -121,8 +121,7 @@ report for review.
 - **masscan_scanner.py** only shells out to masscan and parses its `-oj`
   output — it has no opinion about what the results mean.
 - **fingerprinter.py** performs only benign, client-like connections (a
-  single get request for http-like ports, a passive read for text
-  protocols). no credentials, exploits, or brute-forcing.
+  single get request for http-like ports)
 - **device_classifier.py** is pure and side-effect free: given ports +
   banners, it returns a ranked list of `classification` candidates.
 - ttl-based os guessing is a coarse heuristic (linux/macos ~64, windows
