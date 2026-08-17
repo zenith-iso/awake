@@ -132,6 +132,7 @@ report for review.
 
 # credits, licenses, & transparency
 i dont get how licensing works. fork it, go crazy. - zen
+
 note: the curses, tui menu's code was written by claude. i dont get that either.
 
 ### [masscan](github.com/robertdavidgraham/masscan) by @robertdavidgraham
