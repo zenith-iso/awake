@@ -130,4 +130,8 @@ report for review.
   hint, not ground truth. for more precise os fingerprinting, integrate
   a proper tool like `nmap -o` or `p0f` alongside this framework :)
 
-# made with love by zenith-iso <3
+# credits & licenses
+i dont get how licensing works. fork it, go crazy. - zen
+### [masscan](github.com/robertdavidgraham/masscan) by @robertdavidgraham
+### inspired by @S0Ulle33 's [asleep_scanner](https://github.com/S0Ulle33/asleep_scanner)
+### made with love by zenith-iso <3
