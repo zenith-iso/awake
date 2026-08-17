@@ -1,6 +1,6 @@
-# awake
+# ☀️awake👁️
 
-a powerful python framework and cli tool that:
+## a powerful python framework and cli tool that:
 
 1. uses **masscan** to fetch open ports on set ip ranges.
 2. **fingerprints** each discovered host by connecting to its open ports and
@@ -130,4 +130,4 @@ report for review.
   hint, not ground truth. for more precise os fingerprinting, integrate
   a proper tool like `nmap -o` or `p0f` alongside this framework :)
 
-  made with love by zenith-iso <3
+# made with love by zenith-iso <3
