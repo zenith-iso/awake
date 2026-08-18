@@ -22,10 +22,7 @@ dont be an idiot.
   - debian/ubuntu: `sudo apt-get install masscan`
   - macos: `brew install masscan`
 - root privileges (or `cap_net_raw`/`cap_net_admin`) — masscan uses raw
-  sockets for its syn scan :)
-
-no third-party python packages are required; the framework uses only the
-standard library.
+  sockets for syn scan :)
 
 ## usage: tui (recommended — no file editing required)
 
