@@ -1,3 +1,4 @@
+--important: all this shit burnt me out. prepare for a 100% human written rewrite :)
 # ☀️awake👁️
 
 ## a powerful python framework and cli tool that:
